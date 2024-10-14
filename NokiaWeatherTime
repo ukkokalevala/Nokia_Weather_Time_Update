@@ -1,0 +1,102 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_PCD8544.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <SPI.h>
+#include "secrets.h"
+
+// Define display pins
+#define CLK D1
+#define DIN D2
+#define DC  D5
+#define CE  D6
+#define RST D7
+
+
+// Initialize Nokia 5110 display
+Adafruit_PCD8544 display = Adafruit_PCD8544(CLK, DIN, DC, CE, RST);
+
+// WiFi credentials
+//const char* ssid = "yourSSID";
+//const char* password = "yourPASSWORD";
+
+// OpenWeatherMap API
+const char* apiEndpoint = "https://api.openweathermap.org/data/2.5/weather";
+//const char* apiKey = "yourAPIKEY";
+
+// Coordinates for Cape Town
+const char* lat = "-33.92";  
+const char* lon = "18.42";   
+
+// NTP client setup for date and time
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 7200, 60000);  // 7200 seconds for Cape Town (UTC+2)
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+
+  // Initialize the Nokia 5110 display
+  display.begin();
+  display.setContrast(50);
+  display.clearDisplay();
+  display.setRotation(2);
+  
+  // Initialize NTP time client
+  timeClient.begin();
+}
+
+void loop() {
+  // Update NTP time
+  timeClient.update();
+  String formattedTime = timeClient.getFormattedTime();
+
+  // Fetch weather data
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    String url = String(apiEndpoint) + "?lat=" + lat + "&lon=" + lon + "&appid=" + String(apiKey) + "&units=metric";
+    
+    HTTPClient http;
+    http.begin(client, url);  
+    int httpCode = http.GET();
+
+    if (httpCode > 0 && httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      DynamicJsonDocument doc(2048);
+      DeserializationError error = deserializeJson(doc, payload);
+
+      if (!error) {
+        double temperature = doc["main"]["temp"];
+        const char* description = doc["weather"][0]["description"];
+        
+        // Display weather and time
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setCursor(0, 0);
+        display.println("Cape Town, SA");
+        display.println("Temp: " + String(temperature) + " C");
+        display.println(String(description));
+        
+        display.setCursor(0, 30);  // Show time at the bottom
+        display.setTextSize(1);
+        display.println("Time: " + formattedTime);
+        display.display();
+      }
+    }
+    http.end();
+  }
+
+  delay(60000);  // Update every minute
+}
