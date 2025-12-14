@@ -7,7 +7,7 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <SPI.h>
-#include "secrets.h"
+//#include "secrets.h"
 
 // Define display pins
 #define CLK D1
@@ -21,12 +21,12 @@
 Adafruit_PCD8544 display = Adafruit_PCD8544(CLK, DIN, DC, CE, RST);
 
 // WiFi credentials
-//const char* ssid = "yourSSID";
-//const char* password = "yourPASSWORD";
+const char* ssid = "yourSSID";
+const char* password = "yourPASSWORD";
 
 // OpenWeatherMap API
 const char* apiEndpoint = "https://api.openweathermap.org/data/2.5/weather";
-//const char* apiKey = "yourAPIKEY";
+const char* apiKey = "yourAPIKEY";
 
 // Coordinates for Cape Town
 const char* lat = "-33.92";  
