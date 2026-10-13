@@ -1,0 +1,161 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_PCD8544.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <SPI.h>
+
+// Display pins
+#define CLK D1
+#define DIN D2
+#define DC  D5
+#define CE  D6
+#define RST D7
+
+Adafruit_PCD8544 display = Adafruit_PCD8544(CLK, DIN, DC, CE, RST);
+
+// WiFi credentials
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+
+// Open-Meteo (no API key needed)
+const char* apiEndpoint = "https://api.open-meteo.com/v1/forecast";
+
+// Cape Town coordinates
+const char* lat = "-33.92";
+const char* lon = "18.42";
+
+// NTP for local time (UTC+2 = 7200s)
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 7200, 60000);
+
+void setup() {
+  Serial.begin(9600);
+
+  // Init display FIRST so we can see progress
+  display.begin();
+  display.setContrast(60);
+  display.clearDisplay();
+  display.setRotation(2);
+  display.setTextColor(BLACK);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("Booting...");
+  display.display();
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+    delay(500);
+    Serial.print(".");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("WiFi...");
+    display.display();
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\nWiFi FAILED");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("WiFi FAILED");
+    display.display();
+    return;   // stays here, loop() will keep retrying below
+  }
+
+  Serial.println("\nWiFi connected");
+  timeClient.begin();
+}
+
+void loop() {
+  // If WiFi dropped, try reconnect
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin(ssid, password);
+    delay(5000);
+    return;
+  }
+
+  // Update time
+  timeClient.update();
+  String formattedTime = timeClient.getFormattedTime();
+
+  // Build Open-Meteo URL
+  // current=temperature_2m,weather_code  → current conditions
+  String url = String(apiEndpoint)
+             + "?latitude=" + lat
+             + "&longitude=" + lon
+             + "&current=temperature_2m,weather_code"
+             + "&timezone=Africa%2FJohannesburg";
+
+  WiFiClientSecure client;
+  client.setInsecure();   // skip cert validation (fine for this use)
+
+  HTTPClient http;
+  http.begin(client, url);
+  int httpCode = http.GET();
+
+  Serial.print("HTTP code: ");
+  Serial.println(httpCode);
+
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    Serial.println(payload);
+
+    // Open-Meteo current response is small, 1024 is plenty
+    DynamicJsonDocument doc(1024);
+    DeserializationError error = deserializeJson(doc, payload);
+
+    if (error) {
+      Serial.print("JSON error: ");
+      Serial.println(error.c_str());
+    } else {
+      float temperature = doc["current"]["temperature_2m"];
+      int weatherCode  = doc["current"]["weather_code"];
+
+      String description = weatherDescription(weatherCode);
+
+      // Draw
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.println("Cape Town, SA");
+      display.println("Temp: " + String(temperature, 1) + " C");
+      display.println(description);
+      display.println("");
+      display.println("Time: " + formattedTime);
+      display.display();
+
+      Serial.print("Temp: ");
+      Serial.println(temperature);
+    }
+  } else {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("HTTP err");
+    display.println(String(httpCode));
+    display.display();
+  }
+
+  http.end();
+  delay(60000);   // refresh every minute
+}
+
+// Map WMO weather codes → short text (fits 84px wide screen)
+String weatherDescription(int code) {
+  if (code == 0)                  return "Clear";
+  if (code == 1)                  return "Mainly clear";
+  if (code == 2)                  return "Partly cloudy";
+  if (code == 3)                  return "Overcast";
+  if (code == 45 || code == 48)   return "Fog";
+  if (code >= 51 && code <= 57)   return "Drizzle";
+  if (code >= 61 && code <= 67)   return "Rain";
+  if (code >= 71 && code <= 77)   return "Snow";
+  if (code >= 80 && code <= 82)   return "Showers";
+  if (code >= 85 && code <= 86)   return "Snow showers";
+  if (code >= 95 && code <= 99)   return "Thunderstorm";
+  return "Unknown";
+}
